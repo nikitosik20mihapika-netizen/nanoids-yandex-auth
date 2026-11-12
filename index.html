@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1b2a">
+  <title>Nanoids Auth</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      font-family: system-ui, sans-serif;
+      background: #0d1b2a;
+      color: #ecf0f1;
+      text-align: center;
+    }
+    .box { max-width: 320px; }
+    h1 { font-size: 1.25rem; margin: 0 0 10px; }
+    p { opacity: .8; line-height: 1.45; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Nanoids</h1>
+    <p id="st">Finishing login...</p>
+  </div>
+
+  <script>
+    (function () {
+      const st = document.getElementById("st");
+      const params = new URLSearchParams(
+        location.hash ? location.hash.slice(1) : location.search.slice(1)
+      );
+      const token = params.get("access_token") || params.get("token") || "";
+
+      if (!token) {
+        st.textContent = "No token. Close this window and try again.";
+        return;
+      }
+
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(
+            { type: "nano_yandex_auth", access_token: token },
+            "*"
+          );
+          st.textContent = "OK! You can close this window.";
+          setTimeout(function () {
+            try { window.close(); } catch (e) {}
+          }, 500);
+          return;
+        }
+      } catch (e) {}
+
+      location.href = "nanoids://oauth#access_token=" + encodeURIComponent(token);
+      st.textContent = "Return to the game. If it did not login, use Paste token.";
+    })();
+  </script>
+</body>
+</html>
