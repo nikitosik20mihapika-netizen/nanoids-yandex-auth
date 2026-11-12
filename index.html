@@ -1,65 +1,94 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0d1b2a">
-  <title>Nanoids Auth</title>
+  <meta name="referrer" content="no-referrer">
+  <title>Nanoids — вход через Яндекс</title>
   <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
     body {
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      box-sizing: border-box;
-      font-family: system-ui, sans-serif;
-      background: #0d1b2a;
-      color: #ecf0f1;
-      text-align: center;
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      padding: 24px; background: #0d1b2a; color: #ecf0f1;
+      font: 16px/1.5 system-ui, sans-serif; text-align: center;
     }
-    .box { max-width: 320px; }
-    h1 { font-size: 1.25rem; margin: 0 0 10px; }
-    p { opacity: .8; line-height: 1.45; }
+    main { width: min(100%, 390px); }
+    h1 { margin: 0 0 12px; font-size: 28px; }
+    p { color: #bdc7d1; overflow-wrap: anywhere; }
+    button {
+      display: none; margin: 18px auto 0; padding: 12px 18px;
+      border: 0; border-radius: 10px; background: #fc3f1d;
+      color: white; font-weight: 700; font-size: 16px;
+    }
   </style>
 </head>
 <body>
-  <div class="box">
+  <main>
     <h1>Nanoids</h1>
-    <p id="st">Finishing login...</p>
-  </div>
-
+    <p id="status">Завершаем вход через Яндекс…</p>
+    <button id="copy" type="button">Скопировать токен для ручного входа</button>
+  </main>
   <script>
-    (function () {
-      const st = document.getElementById("st");
-      const params = new URLSearchParams(
-        location.hash ? location.hash.slice(1) : location.search.slice(1)
-      );
-      const token = params.get("access_token") || params.get("token") || "";
+  (function () {
+    'use strict';
+    var status = document.getElementById('status');
+    var copyButton = document.getElementById('copy');
+    var params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    if (!params.has('access_token')) {
+      params = new URLSearchParams((location.search || '').replace(/^\?/, ''));
+    }
 
-      if (!token) {
-        st.textContent = "No token. Close this window and try again.";
+    var token = params.get('access_token') || params.get('token') || '';
+    var state = params.get('state') || '';
+    var oauthError = params.get('error_description') || params.get('error');
+
+    if (oauthError) {
+      status.textContent = 'Яндекс не завершил авторизацию: ' + oauthError;
+      return;
+    }
+    if (!token) {
+      status.textContent = 'Токен не найден. Закрой окно и попробуй войти ещё раз.';
+      return;
+    }
+
+    var message = {
+      type: 'nano_yandex_auth',
+      access_token: token,
+      state: state
+    };
+
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(message, '*');
+        status.textContent = 'Токен передан в Nanoids. Это окно можно закрыть.';
+        setTimeout(function () {
+          try { window.close(); } catch (e) {}
+        }, 900);
         return;
       }
+    } catch (e) {}
 
-      try {
-        if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(
-            { type: "nano_yandex_auth", access_token: token },
-            "*"
-          );
-          st.textContent = "OK! You can close this window.";
-          setTimeout(function () {
-            try { window.close(); } catch (e) {}
-          }, 500);
-          return;
-        }
-      } catch (e) {}
+    // Резервный путь для среды, которая умеет открывать nanoids:// deep links.
+    try {
+      location.href = 'nanoids://oauth#access_token=' +
+        encodeURIComponent(token) + '&state=' + encodeURIComponent(state);
+    } catch (e) {}
 
-      location.href = "nanoids://oauth#access_token=" + encodeURIComponent(token);
-      st.textContent = "Return to the game. If it did not login, use Paste token.";
-    })();
+    status.textContent =
+      'Браузер не сообщил игре о входе автоматически. Можно скопировать токен и вставить его в окне ручного входа Nanoids.';
+    copyButton.style.display = 'inline-block';
+    copyButton.addEventListener('click', function () {
+      var done = function () { status.textContent = 'Токен скопирован. Вернись в Nanoids и вставь его в поле ручного входа.'; };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(token).then(done).catch(function () {
+          status.textContent = 'Не удалось скопировать автоматически. Разреши доступ к буферу обмена или повтори вход из игры.';
+        });
+      } else {
+        status.textContent = 'Буфер обмена недоступен в этом браузере. Повтори вход из игры.';
+      }
+    });
+  })();
   </script>
 </body>
 </html>
