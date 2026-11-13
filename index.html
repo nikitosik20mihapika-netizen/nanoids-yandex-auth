@@ -23,9 +23,8 @@
       padding: 14px 18px; border: 0; border-radius: 12px;
       font-weight: 700; font-size: 16px; cursor: pointer;
     }
-    #confirm { background: #27ae60; color: #fff; display: none; }
+    #confirm { background: #27ae60; color: #fff; }
     #copy { background: #34495e; color: #fff; display: none; }
-    #closeBtn { background: #fc3f1d; color: #fff; display: none; }
   </style>
 </head>
 <body>
@@ -33,8 +32,7 @@
     <h1>Nanoids</h1>
     <p id="status">Завершаем вход через Яндекс…</p>
     <div class="row">
-      <button id="confirm" type="button">Подтвердить и вернуться в игру</button>
-      <button id="closeBtn" type="button">Закрыть окно</button>
+      <button id="confirm" type="button">Вернуться в игру</button>
       <button id="copy" type="button">Скопировать токен</button>
     </div>
   </main>
@@ -44,7 +42,6 @@
     var statusEl = document.getElementById('status');
     var confirmBtn = document.getElementById('confirm');
     var copyBtn = document.getElementById('copy');
-    var closeBtn = document.getElementById('closeBtn');
 
     var params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
     if (!params.has('access_token')) {
@@ -60,105 +57,73 @@
       statusEl.textContent = text;
     }
 
-    function buildMessage() {
-      return {
-        type: 'nano_yandex_auth',
-        access_token: token,
-        state: state
-      };
+    function gameReturnUrl() {
+      return 'https://appassets.androidplatform.net/assets/index.html#nano_oauth=' +
+        encodeURIComponent(token) +
+        (state ? ('&nano_state=' + encodeURIComponent(state)) : '');
     }
 
-    /** Передать токен в игру (opener / parent) */
     function sendToGame() {
-      var msg = buildMessage();
-      var sent = false;
+      var msg = { type: 'nano_yandex_auth', access_token: token, state: state };
       try {
         if (window.opener && !window.opener.closed) {
           window.opener.postMessage(msg, '*');
-          sent = true;
+          return 'opener';
         }
       } catch (e) {}
       try {
         if (window.parent && window.parent !== window) {
           window.parent.postMessage(msg, '*');
-          sent = true;
+          return 'parent';
         }
       } catch (e) {}
-      // localStorage fallback: игра может прочитать при возврате
-      try {
-        localStorage.setItem('nano_yandex_pending_token', JSON.stringify({
-          access_token: token,
-          state: state,
-          ts: Date.now()
-        }));
-        sent = true;
-      } catch (e) {}
-      return sent;
+      return null;
     }
 
-    function tryCloseOrBack() {
-      try { window.close(); } catch (e) {}
-      setTimeout(function () {
-        if (!window.closed) {
-          try {
-            if (history.length > 1) history.go(-1);
-          } catch (e) {}
-        }
-      }, 300);
-      setTimeout(function () {
-        if (!window.closed) {
-          try {
-            location.href = 'nanoids://oauth#access_token=' +
-              encodeURIComponent(token) + '&state=' + encodeURIComponent(state);
-          } catch (e) {}
-        }
-      }, 600);
+    function returnToGame() {
+      var via = sendToGame();
+      if (via === 'opener') {
+        setStatus('Готово! Закрываем окно…', 'ok');
+        setTimeout(function () { try { window.close(); } catch (e) {} }, 400);
+        return;
+      }
+      // WebView приложения: редирект на страницу игры (НЕ nanoids://)
+      setStatus('Возвращаем в игру…', 'ok');
+      location.replace(gameReturnUrl());
     }
 
     if (oauthError) {
-      setStatus('Яндекс не завершил авторизацию: ' + oauthError, 'err');
+      setStatus('Ошибка Яндекса: ' + oauthError, 'err');
       return;
     }
     if (!token) {
-      setStatus('Токен не найден. Закрой окно и войди ещё раз.', 'err');
+      setStatus('Токен не найден. Закрой окно и войди снова.', 'err');
       return;
     }
 
-    // Сразу пробуем передать
-    var ok = sendToGame();
-    if (ok && window.opener && !window.opener.closed) {
-      setStatus('Токен передан в Nanoids. Возвращаем в игру…', 'ok');
-      confirmBtn.style.display = 'block';
-      closeBtn.style.display = 'block';
-      setTimeout(tryCloseOrBack, 500);
+    // авто: postMessage или сразу в игру
+    var via = sendToGame();
+    if (via === 'opener') {
+      setStatus('Токен передан. Можно закрыть окно.', 'ok');
+      setTimeout(function () { try { window.close(); } catch (e) {} }, 600);
     } else {
-      setStatus('Нажми «Подтвердить», чтобы передать вход в игру.', 'ok');
-      confirmBtn.style.display = 'block';
-      closeBtn.style.display = 'block';
-      copyBtn.style.display = 'block';
+      setStatus('Нажми «Вернуться в игру».', 'ok');
+      // в WebView сразу пробуем редирект
+      var ua = navigator.userAgent || '';
+      if (/; wv\)/i.test(ua) || /Android/i.test(ua)) {
+        setTimeout(returnToGame, 300);
+      }
     }
 
-    confirmBtn.addEventListener('click', function () {
-      sendToGame();
-      setStatus('Готово! Возвращаемся в игру…', 'ok');
-      tryCloseOrBack();
-    });
-
-    closeBtn.addEventListener('click', function () {
-      sendToGame();
-      tryCloseOrBack();
-    });
-
+    confirmBtn.addEventListener('click', returnToGame);
+    copyBtn.style.display = 'block';
     copyBtn.addEventListener('click', function () {
-      var done = function () {
-        setStatus('Токен скопирован. Вставь его в игре: Настр. → Вставить токен', 'ok');
-      };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(token).then(done).catch(function () {
-          setStatus('Не удалось скопировать. Разреши буфер обмена.', 'err');
+        navigator.clipboard.writeText(token).then(function () {
+          setStatus('Токен скопирован. Вставь в игре: Настр. → Вставить токен', 'ok');
+        }).catch(function () {
+          setStatus('Не удалось скопировать.', 'err');
         });
-      } else {
-        setStatus('Буфер обмена недоступен.', 'err');
       }
     });
   })();
