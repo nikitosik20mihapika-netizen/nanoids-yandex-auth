@@ -77,10 +77,13 @@
     }
 
     function notifyGame() {
-      var msg = { type: 'nano_yandex_auth', access_token: token, state: state };
       try {
         if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(msg, '*');
+          window.opener.postMessage({
+            type: 'nano_yandex_auth',
+            access_token: token,
+            state: state
+          }, '*');
           return true;
         }
       } catch (e) {}
@@ -90,11 +93,9 @@
     function showLoginSuccess(name) {
       spinWrap.style.display = 'none';
       loginOk = true;
-      var label = name ? ('Вход: ' + name) : 'Вход: аккаунт Яндекс';
-      // тот же смысл, что уведомление в игре
-      setStatus(label, 'ok');
+      setStatus(name ? ('Вход: ' + name) : 'Вход: аккаунт Яндекс', 'ok');
       confirmBtn.style.display = 'block';
-      // НЕ перекидываем сами — только по кнопке
+      // без авто-перехода — только кнопка
     }
 
     function showFail(msg) {
@@ -123,34 +124,23 @@
           return res.json();
         }).then(function (info) {
           if (!info || !(info.id || info.psuid)) throw new Error('no_id');
-          var name = [info.first_name, info.last_name].filter(Boolean).join(' ') ||
-            info.login || '';
-          return {
-            ok: true,
-            user_id: 'ya_' + (info.id || info.psuid),
-            display_name: name
-          };
+          var name = [info.first_name, info.last_name].filter(Boolean).join(' ') || info.login || '';
+          return { ok: true, user_id: 'ya_' + (info.id || info.psuid), display_name: name };
         });
       });
     }
 
-    if (oauthError) {
-      showFail('Яндекс отклонил вход: ' + oauthError);
-      return;
-    }
-    if (!token) {
-      showFail('Токен не получен. Войди снова из игры.');
-      return;
-    }
+    if (oauthError) { showFail('Яндекс отклонил вход: ' + oauthError); return; }
+    if (!token) { showFail('Токен не получен. Войди снова из игры.'); return; }
 
     confirmBtn.addEventListener('click', function () {
       if (!loginOk) return;
       notifyGame();
-      // только по кнопке после «Вход: …»
       if (window.opener && !window.opener.closed) {
         try { window.close(); } catch (e) {}
         return;
       }
+      // только по кнопке
       location.replace(gameReturnUrl());
     });
 
@@ -162,11 +152,8 @@
       }
     });
 
-    // пока нет «Вход: …» — кнопки возврата нет, авто-перехода нет
     verifyAccount().then(function (data) {
-      var name = (data && (data.display_name || data.login)) || '';
-      showLoginSuccess(name);
-      // токен можно заранее отдать opener, но в игру не уходим
+      showLoginSuccess((data && (data.display_name || data.login)) || '');
       notifyGame();
     }).catch(function () {
       showFail('Вход не удался. Попробуй ещё раз из игры.');
