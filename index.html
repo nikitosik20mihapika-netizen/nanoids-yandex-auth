@@ -18,19 +18,30 @@
     p { color: #bdc7d1; overflow-wrap: anywhere; margin: 0 0 10px; }
     .ok { color: #2ecc71; }
     .err { color: #e74c3c; }
+    .muted { color: #7f8c9b; font-size: 14px; }
     .row { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
     button {
       padding: 14px 18px; border: 0; border-radius: 12px;
       font-weight: 700; font-size: 16px; cursor: pointer;
+      display: none;
     }
     #confirm { background: #27ae60; color: #fff; }
-    #copy { background: #34495e; color: #fff; display: none; }
+    #copy { background: #34495e; color: #fff; }
+    .spinner {
+      width: 36px; height: 36px; margin: 16px auto;
+      border: 3px solid rgba(255,255,255,.15);
+      border-top-color: #5dade2; border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #spinWrap { display: block; }
   </style>
 </head>
 <body>
   <main>
     <h1>Nanoids</h1>
-    <p id="status">Завершаем вход через Яндекс…</p>
+    <div id="spinWrap"><div class="spinner"></div></div>
+    <p id="status">Проверяем вход в аккаунт…</p>
     <div class="row">
       <button id="confirm" type="button">Вернуться в игру</button>
       <button id="copy" type="button">Скопировать токен</button>
@@ -39,9 +50,11 @@
   <script>
   (function () {
     'use strict';
+    var EDGE = 'https://nwfrswfidmgfiztutbvk.supabase.co/functions/v1/yandex-auth';
     var statusEl = document.getElementById('status');
     var confirmBtn = document.getElementById('confirm');
     var copyBtn = document.getElementById('copy');
+    var spinWrap = document.getElementById('spinWrap');
 
     var params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
     if (!params.has('access_token')) {
@@ -51,10 +64,16 @@
     var token = params.get('access_token') || params.get('token') || '';
     var state = params.get('state') || '';
     var oauthError = params.get('error_description') || params.get('error');
+    var loginOk = false;
+    var displayName = '';
 
     function setStatus(text, cls) {
       statusEl.className = cls || '';
       statusEl.textContent = text;
+    }
+
+    function hideSpin() {
+      spinWrap.style.display = 'none';
     }
 
     function gameReturnUrl() {
@@ -63,68 +82,102 @@
         (state ? ('&nano_state=' + encodeURIComponent(state)) : '');
     }
 
-    function sendToGame() {
+    function sendToOpener() {
       var msg = { type: 'nano_yandex_auth', access_token: token, state: state };
       try {
         if (window.opener && !window.opener.closed) {
           window.opener.postMessage(msg, '*');
-          return 'opener';
+          return true;
         }
       } catch (e) {}
-      try {
-        if (window.parent && window.parent !== window) {
-          window.parent.postMessage(msg, '*');
-          return 'parent';
-        }
-      } catch (e) {}
-      return null;
+      return false;
     }
 
-    function returnToGame() {
-      var via = sendToGame();
-      if (via === 'opener') {
-        setStatus('Готово! Закрываем окно…', 'ok');
-        setTimeout(function () { try { window.close(); } catch (e) {} }, 400);
+    function showSuccessUi() {
+      hideSpin();
+      loginOk = true;
+      var name = displayName ? (' как ' + displayName) : '';
+      setStatus('Вход выполнен' + name + '. Можно вернуться в игру.', 'ok');
+      confirmBtn.style.display = 'block';
+      // авто-возврат в WebView / popup
+      if (sendToOpener()) {
+        setTimeout(function () { try { window.close(); } catch (e) {} }, 500);
         return;
       }
-      // WebView приложения: редирект на страницу игры (НЕ nanoids://)
-      setStatus('Возвращаем в игру…', 'ok');
-      location.replace(gameReturnUrl());
+      var ua = navigator.userAgent || '';
+      if (/; wv\)/i.test(ua) || /Android/i.test(ua)) {
+        setTimeout(function () { location.replace(gameReturnUrl()); }, 400);
+      }
+    }
+
+    function showFailUi(msg) {
+      hideSpin();
+      loginOk = false;
+      setStatus(msg || 'Не удалось войти в аккаунт.', 'err');
+      copyBtn.style.display = 'block';
+      confirmBtn.style.display = 'none';
+    }
+
+    /** Проверка токена: Edge, иначе напрямую API Яндекса */
+    function verifyAccount() {
+      return fetch(EDGE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_token: token })
+      }).then(function (res) {
+        return res.json().then(function (data) {
+          if (data && data.ok && data.user_id) {
+            displayName = data.display_name || data.login || '';
+            return data;
+          }
+          throw new Error((data && data.error) || 'edge');
+        });
+      }).catch(function () {
+        return fetch('https://login.yandex.ru/info?format=json', {
+          headers: { Authorization: 'OAuth ' + token }
+        }).then(function (res) {
+          if (!res.ok) throw new Error('yandex_invalid');
+          return res.json();
+        }).then(function (info) {
+          if (!info || !(info.id || info.psuid)) throw new Error('no_id');
+          displayName = [info.first_name, info.last_name].filter(Boolean).join(' ') ||
+            info.login || '';
+          return { ok: true, user_id: 'ya_' + (info.id || info.psuid), display_name: displayName };
+        });
+      });
     }
 
     if (oauthError) {
-      setStatus('Ошибка Яндекса: ' + oauthError, 'err');
+      showFailUi('Яндекс отклонил вход: ' + oauthError);
       return;
     }
     if (!token) {
-      setStatus('Токен не найден. Закрой окно и войди снова.', 'err');
+      showFailUi('Токен не получен. Закрой окно и войди снова.');
       return;
     }
 
-    // авто: postMessage или сразу в игру
-    var via = sendToGame();
-    if (via === 'opener') {
-      setStatus('Токен передан. Можно закрыть окно.', 'ok');
-      setTimeout(function () { try { window.close(); } catch (e) {} }, 600);
-    } else {
-      setStatus('Нажми «Вернуться в игру».', 'ok');
-      // в WebView сразу пробуем редирект
-      var ua = navigator.userAgent || '';
-      if (/; wv\)/i.test(ua) || /Android/i.test(ua)) {
-        setTimeout(returnToGame, 300);
+    // Кнопки до успеха не показываем — только после verify
+    confirmBtn.addEventListener('click', function () {
+      if (!loginOk) return;
+      if (sendToOpener()) {
+        try { window.close(); } catch (e) {}
+        return;
       }
-    }
-
-    confirmBtn.addEventListener('click', returnToGame);
-    copyBtn.style.display = 'block';
+      location.replace(gameReturnUrl());
+    });
     copyBtn.addEventListener('click', function () {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(token).then(function () {
-          setStatus('Токен скопирован. Вставь в игре: Настр. → Вставить токен', 'ok');
-        }).catch(function () {
-          setStatus('Не удалось скопировать.', 'err');
+          setStatus('Токен скопирован. Вставь в игре вручную.', 'muted');
         });
       }
+    });
+
+    verifyAccount().then(function (data) {
+      if (data && (data.ok || data.user_id)) showSuccessUi();
+      else showFailUi('Аккаунт не подтверждён.');
+    }).catch(function (e) {
+      showFailUi('Вход не удался. Попробуй ещё раз из игры.');
     });
   })();
   </script>
